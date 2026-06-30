@@ -142,9 +142,9 @@ See the [`examples/`](examples/) directory:
 If you use fysvm in published work, please cite the accompanying paper:
 
 ```bibtex
-@misc{sorensen2025fuzzy,
-  author = {Sørensen, S. D.},
+@misc{davidsen2026fuzzy,
+  author = {Davidsen, S. A.},
   title  = {Fuzzy Rule-Space Max-Margin Classifiers},
-  year   = {2025}
+  year   = {2026}
 }
 ```
