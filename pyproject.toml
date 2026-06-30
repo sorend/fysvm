@@ -1,0 +1,23 @@
+[project]
+name = "fysvm"
+version = "0.1.0"
+description = "Fuzzy rule-space max-margin classifiers built on scikit-learn."
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "numpy>=2.3",
+    "scipy>=1.16",
+    "scikit-learn>=1.8",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
