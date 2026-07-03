@@ -439,6 +439,7 @@ class SparseMaxMarginFuzzyRuleMachine(ClassifierMixin, BaseEstimator):
             candidates = self._fallback_single_feature_rules(memberships, y_signed, sample_weight)
 
         candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+        self.n_candidate_rules_ = len(candidates)
         if self.max_rules is not None:
             candidates = candidates[: self.max_rules]
         return [rule for _, _, _, rule in candidates]
