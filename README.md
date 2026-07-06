@@ -1,5 +1,9 @@
 # fysvm
 
+[![GitHub Release](https://img.shields.io/github/v/release/sorend/fysvm)](https://github.com/sorend/fysvm/releases)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/sorend/fysvm/build.yml?branch=main)](https://github.com/sorend/fysvm/actions/workflows/build.yml)
+[![codecov](https://codecov.io/gh/sorend/fysvm/branch/main/graph/badge.svg)](https://codecov.io/gh/sorend/fysvm)
+
 Intrinsically interpretable fuzzy SVM-style classifiers built on scikit-learn.
 
 `fysvm` trains linear max-margin classifiers over fuzzy rule activations instead

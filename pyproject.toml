@@ -13,6 +13,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=8.4",
+    "pytest-cov>=6.0",
 ]
 
 [build-system]
