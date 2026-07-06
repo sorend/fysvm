@@ -63,16 +63,15 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v4
 
+      - name: Compute version
+        id: git-version
+        uses: sorend/git-version-action@v1
+
       - name: Set version in pyproject.toml
         run: |
-          TAG_VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-          if [ -n "$TAG_VERSION" ]; then
-            VERSION="$TAG_VERSION"
-          else
-            BASE_VERSION=$(grep -oP 'version = "\K[^"]+' pyproject.toml | sed 's/dev.*//')
-            COMMIT_COUNT=$(git rev-list --count HEAD)
-            VERSION="${BASE_VERSION}.dev${COMMIT_COUNT}"
-          fi
+          VERSION="${{ steps.git-version.outputs.version }}"
+          VERSION="${VERSION#v}"
+          VERSION=$(echo "$VERSION" | sed -E 's/-rc\.([0-9]+)/rc\1/')
           echo "Version: $VERSION"
           sed -i "s/version = \".*\"/version = \"$VERSION\"/" pyproject.toml
 
