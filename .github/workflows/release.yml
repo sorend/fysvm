@@ -59,7 +59,7 @@ jobs:
         run: |
           VERSION="${{ steps.git-version.outputs.version }}"
           VERSION="${VERSION#v}"
-          VERSION=$(echo "$VERSION" | sed -E 's/-rc\.([0-9]+)/rc\1/')
+          VERSION=$(echo "$VERSION" | sed -E 's/-rc\.([0-9]+)/rc\1/' | sed -E 's/-b[0-9]+$//')
           echo "Version: $VERSION"
           sed -i "s/version = \".*\"/version = \"$VERSION\"/" pyproject.toml
 
@@ -67,6 +67,7 @@ jobs:
         run: |
           RAW_VERSION="${{ steps.git-version.outputs.version }}"
           VERSION="${RAW_VERSION#v}"
+          VERSION=$(echo "$VERSION" | sed -E 's/-b[0-9]+$//')
           if ! grep -q "$VERSION" README.md; then
             echo "ERROR: README.md does not contain version $VERSION"
             echo "Please update README.md with the new version before releasing."

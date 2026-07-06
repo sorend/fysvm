@@ -71,7 +71,7 @@ jobs:
         run: |
           VERSION="${{ steps.git-version.outputs.version }}"
           VERSION="${VERSION#v}"
-          VERSION=$(echo "$VERSION" | sed -E 's/-rc\.([0-9]+)/rc\1/')
+          VERSION=$(echo "$VERSION" | sed -E 's/-rc\.([0-9]+)/rc\1/' | sed -E 's/-b[0-9]+$//')
           echo "Version: $VERSION"
           sed -i "s/version = \".*\"/version = \"$VERSION\"/" pyproject.toml
 
