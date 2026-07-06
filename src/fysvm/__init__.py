@@ -1,5 +1,9 @@
 """Fuzzy rule-space max-margin classifiers."""
 
+from importlib.metadata import version
+
+__version__ = version("fysvm")
+
 from fysvm.rule_svm import (
     FuzzyRule,
     FuzzyRuleSVM,
@@ -12,4 +16,5 @@ __all__ = [
     "FuzzyRuleSVM",
     "RuleCondition",
     "SparseMaxMarginFuzzyRuleMachine",
+    "__version__",
 ]
