@@ -65,9 +65,13 @@ jobs:
 
       - name: Set version in pyproject.toml
         run: |
-          VERSION=$(git describe --tags --always 2>/dev/null || echo "")
-          if [ -z "$VERSION" ]; then
-            VERSION=$(grep -oP 'version = "\K[^"]+' pyproject.toml)
+          TAG_VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -n "$TAG_VERSION" ]; then
+            VERSION="$TAG_VERSION"
+          else
+            BASE_VERSION=$(grep -oP 'version = "\K[^"]+' pyproject.toml | sed 's/dev.*//')
+            SHORT_SHA=$(git rev-parse --short HEAD)
+            VERSION="${BASE_VERSION}.dev0+${SHORT_SHA}"
           fi
           echo "Version: $VERSION"
           sed -i "s/version = \".*\"/version = \"$VERSION\"/" pyproject.toml
