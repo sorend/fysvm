@@ -1,0 +1,84 @@
+name: Renovate
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  renovate:
+    name: Renovate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Self-hosted Renovate
+        uses: renovatebot/github-action@v41
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          configurationFile: renovate.json
+
+  dashboard:
+    name: Create Dashboard Issue
+    runs-on: ubuntu-latest
+    needs: renovate
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get pending Renovate PRs
+        id: renovate-prs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PRS=$(gh pr list --search "author:app/renovate" --state open --json number,title,url,labels --jq '.[] | "- [ ] [#\(.number)](\(.url)): \(.title)"')
+          echo "prs<<EOF" >> $GITHUB_OUTPUT
+          echo "$PRS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create or update dashboard issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prs = `${{ steps.renovate-prs.outputs.prs }}`;
+            const body = `## Renovate Dashboard
+
+            This issue provides a overview of pending Renovate dependency updates.
+
+            ### Pending Updates
+
+            ${prs || 'No pending updates.'}
+
+            ### Configuration
+
+            Renovate runs daily at 02:00 UTC.
+
+            ### Links
+
+            - [Renovate Dashboard](https://github.com/${context.repo.owner}/${context.repo.repo}/pulls?q=is%3Apr+author%3Aapp%2Frenovate+is%3Aopen)
+            `;
+
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'renovate-dashboard',
+              state: 'open'
+            });
+
+            if (issues.data.length > 0) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issues.data[0].number,
+                body: body
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: 'Renovate Dashboard',
+                body: body,
+                labels: ['renovate-dashboard']
+              });
+            }
