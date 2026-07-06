@@ -63,13 +63,13 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v4
 
-      - name: Get version
-        id: git_version
-        uses: sorend/git-version-action@v1
-
       - name: Set version in pyproject.toml
         run: |
-          VERSION=${{ steps.git_version.outputs.version }}
+          VERSION=$(git describe --tags --always 2>/dev/null || echo "")
+          if [ -z "$VERSION" ]; then
+            VERSION=$(grep -oP 'version = "\K[^"]+' pyproject.toml)
+          fi
+          echo "Version: $VERSION"
           sed -i "s/version = \".*\"/version = \"$VERSION\"/" pyproject.toml
 
       - name: Build package
