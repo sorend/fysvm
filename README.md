@@ -17,7 +17,7 @@ IF glucose is high AND bmi is high THEN positive
 ## Installation
 
 ```bash
-uv pip install fysvm
+uv pip install fysvm==0.0.1
 ```
 
 Requires Python ≥ 3.14 and depends only on `numpy`, `scipy`, and `scikit-learn`.
