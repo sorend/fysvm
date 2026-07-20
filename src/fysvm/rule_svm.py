@@ -8,7 +8,9 @@ from itertools import combinations, product
 from typing import Any, Literal
 
 import numpy as np
+from scipy.optimize import linprog
 from sklearn.base import BaseEstimator, ClassifierMixin
+from sklearn.feature_selection import f_classif, mutual_info_classif
 from sklearn.svm import LinearSVC
 from sklearn.utils.multiclass import unique_labels
 from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
@@ -16,6 +18,8 @@ from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
 
 AndOperator = Literal["min", "product", "softmin"]
 Penalty = Literal["l1", "l2"]
+FeatureScreening = Literal["none", "anova", "mutual_info"]
+RuleGeneration = Literal["enumeration", "column_generation"]
 
 
 @dataclass(frozen=True)
@@ -82,6 +86,9 @@ class SparseMaxMarginFuzzyRuleMachine(ClassifierMixin, BaseEstimator):
         softmin_temperature: float = 0.1,
         partition_quantiles: tuple[float, float, float] = (0.05, 0.5, 0.95),
         rule_length_penalty: float = 0.25,
+        feature_screening: FeatureScreening = "none",
+        screen_top_k: int | None = None,
+        rule_generation: RuleGeneration = "enumeration",
         feature_names: Sequence[str] | None = None,
         class_weight: dict[Any, float] | Literal["balanced"] | None = None,
         random_state: int | None = None,
@@ -97,6 +104,9 @@ class SparseMaxMarginFuzzyRuleMachine(ClassifierMixin, BaseEstimator):
         self.softmin_temperature = softmin_temperature
         self.partition_quantiles = partition_quantiles
         self.rule_length_penalty = rule_length_penalty
+        self.feature_screening = feature_screening
+        self.screen_top_k = screen_top_k
+        self.rule_generation = rule_generation
         self.feature_names = feature_names
         self.class_weight = class_weight
         self.random_state = random_state
@@ -144,18 +154,24 @@ class SparseMaxMarginFuzzyRuleMachine(ClassifierMixin, BaseEstimator):
 
         self.classes_ = classes
         self.n_features_in_ = X_checked.shape[1]
-        self.feature_names_in_ = self._finalize_feature_names(
-            raw_feature_names, self.n_features_in_
-        )
+        raw_names = self._finalize_feature_names(raw_feature_names, self.n_features_in_)
+        self.selected_feature_indices_ = self._select_features(X_checked, y_checked)
+        self.n_screened_features_ = int(len(self.selected_feature_indices_))
+        self.feature_names_in_ = raw_names[self.selected_feature_indices_]
+        X_model = X_checked[:, self.selected_feature_indices_]
 
-        self.partitions_ = self._fit_partitions(X_checked)
-        memberships = self._concept_membership_tensor(X_checked)
+        self.partitions_ = self._fit_partitions(X_model)
+        memberships = self._concept_membership_tensor(X_model)
         y_signed = self._signed_labels(y_checked)
         rule_weights = sample_weight if sample_weight is not None else np.ones_like(
             y_signed, dtype=np.float64
         )
 
-        self.rules_ = self._generate_rules(memberships, y_signed, rule_weights)
+        self.rules_ = (
+            self._generate_rules_column_generation(memberships, y_signed, rule_weights)
+            if self.rule_generation == "column_generation"
+            else self._generate_rules(memberships, y_signed, rule_weights)
+        )
         Z = self._rule_activation_matrix_from_memberships(memberships, self.rules_)
         self.rule_penalties_ = np.array(
             [1.0 + self.rule_length_penalty * (rule.length - 1) for rule in self.rules_],
@@ -386,6 +402,35 @@ class SparseMaxMarginFuzzyRuleMachine(ClassifierMixin, BaseEstimator):
             )
         if self.rule_length_penalty < 0:
             raise ValueError("rule_length_penalty must be non-negative.")
+        if self.feature_screening not in {"none", "anova", "mutual_info"}:
+            raise ValueError(
+                "feature_screening must be 'none', 'anova', or 'mutual_info'."
+            )
+        if self.screen_top_k is not None and self.screen_top_k < 1:
+            raise ValueError("screen_top_k must be None or at least 1.")
+        if self.rule_generation not in {"enumeration", "column_generation"}:
+            raise ValueError(
+                "rule_generation must be 'enumeration' or 'column_generation'."
+            )
+
+    def _select_features(self, X: np.ndarray, y: np.ndarray) -> np.ndarray:
+        n_features = X.shape[1]
+        if (
+            self.feature_screening == "none"
+            or self.screen_top_k is None
+            or self.screen_top_k >= n_features
+        ):
+            self.feature_screening_scores_ = np.ones(n_features, dtype=np.float64)
+            return np.arange(n_features, dtype=int)
+
+        if self.feature_screening == "anova":
+            scores, _ = f_classif(X, y)
+        else:
+            scores = mutual_info_classif(X, y, random_state=self.random_state)
+        scores = np.nan_to_num(scores, nan=0.0, posinf=0.0, neginf=0.0)
+        self.feature_screening_scores_ = scores
+        selected = np.argsort(scores)[::-1][: self.screen_top_k]
+        return np.sort(selected.astype(int))
 
     def _fit_partitions(self, X: np.ndarray) -> list[_FuzzyPartition]:
         quantiles = np.quantile(X, self.partition_quantiles, axis=0)
@@ -443,6 +488,245 @@ class SparseMaxMarginFuzzyRuleMachine(ClassifierMixin, BaseEstimator):
         if self.max_rules is not None:
             candidates = candidates[: self.max_rules]
         return [rule for _, _, _, rule in candidates]
+
+    def _generate_rules_column_generation(
+        self,
+        memberships: np.ndarray,
+        y_signed: np.ndarray,
+        sample_weight: np.ndarray,
+    ) -> list[FuzzyRule]:
+        """Column-generation-inspired rule discovery.
+
+        Avoids materialising the full O(d^2) candidate pool. Starts with all
+        3d length-1 rules, then incrementally adds the length-2 rules that
+        score highly under an auxiliary L1-hinge LP pricing problem. The final
+        estimator is still the squared-hinge LinearSVC fitted after rule
+        discovery, so this is an adaptive candidate-generation heuristic rather
+        than an optimality certificate for the final active set.
+
+        The pricing step uses a single BLAS dgemm call (O(d^2 n)) to shortlist
+        candidate feature pairs via product t-norm scoring, then re-scores each
+        candidate with the configured aggregation before adding it. For product t-norm
+        this matches the auxiliary pricing expression; for minimum/smooth-min aggregation
+        it is a fast heuristic shortlist.
+
+        max_rules caps the number of length-2 rules added (not the length-1
+        base set, which is always fully included as the minimal feasible start).
+        """
+        n_samples, n_features, _ = memberships.shape
+
+        # --- Initialise: all length-1 rules that pass the coverage filter ---
+        active_rules: list[FuzzyRule] = []
+        active_pair_set: set[frozenset] = set()
+        blacklisted_pairs: set[frozenset] = set()
+
+        for feature in range(n_features):
+            for term_index, term in enumerate(_TERM_NAMES):
+                activation = memberships[:, feature, term_index]
+                fuzzy_coverage = float(np.average(activation, weights=sample_weight))
+                if fuzzy_coverage >= self.min_rule_coverage:
+                    rule = FuzzyRule((RuleCondition(feature, term),))
+                    active_rules.append(rule)
+                    active_pair_set.add(frozenset([(feature, term)]))
+
+        if not active_rules:
+            active_rules = [
+                FuzzyRule((RuleCondition(feature, term),))
+                for feature in range(n_features)
+                for term in _TERM_NAMES
+            ]
+
+        if self.max_rule_length < 2 or n_features < 2:
+            self.n_candidate_rules_ = len(active_rules)
+            return active_rules
+
+        # --- Adaptive pricing loop ---
+        # max_rules caps the number of length-2 rules added (not the length-1 base)
+        max_len2 = self.max_rules or (9 * n_features * (n_features - 1) // 2)
+        batch_size = 20  # add up to 20 rules per LP solve to reduce solver calls
+        n_len2_added = 0
+
+        while n_len2_added < max_len2:
+            Z = self._rule_activation_matrix_from_memberships(memberships, active_rules)
+            alpha = self._solve_l1svm_lp_for_duals(Z, y_signed, sample_weight)
+
+            remaining = max_len2 - n_len2_added
+            new_rules = self._price_new_rules(
+                memberships,
+                y_signed,
+                alpha,
+                sample_weight,
+                active_pair_set,
+                blacklisted_pairs,
+                top_k=min(batch_size, remaining),
+            )
+
+            if not new_rules:
+                break
+
+            for rule in new_rules:
+                pair_key = frozenset((c.feature, c.term) for c in rule.conditions)
+                active_rules.append(rule)
+                active_pair_set.add(pair_key)
+                n_len2_added += 1
+
+        self.n_candidate_rules_ = len(active_rules)
+        return active_rules
+
+
+    def _solve_l1svm_lp_for_duals(
+        self,
+        Z: np.ndarray,
+        y_signed: np.ndarray,
+        sample_weight: np.ndarray,
+    ) -> np.ndarray:
+        """Solve the auxiliary L1-hinge L1-SVM LP and return pricing weights.
+
+        The primal is:
+            min  sum(beta_plus) + sum(beta_minus) + C * sum(xi)
+            s.t. -y_i * Z_i*(beta_plus - beta_minus) - y_i*b - xi_i <= -1
+                 beta_plus, beta_minus, xi >= 0, b free
+
+        At optimality for this auxiliary LP, the KKT dual variables
+        alpha_i = -marginals[i] give per-sample weights for the pricing step.
+        A rule column with |sum_i alpha_i y_i phi_k(x_i)| > 1 is attractive
+        under the proxy objective, but the final fitted estimator uses
+        squared-hinge LinearSVC rather than this LP.
+        """
+        n_samples, K = Z.shape
+        n_vars = 2 * K + 1 + n_samples  # beta_plus, beta_minus, b_free, xi
+
+        # Objective coefficients
+        w_scale = float(np.mean(sample_weight))
+        c_obj = np.empty(n_vars)
+        c_obj[:K] = 1.0
+        c_obj[K : 2 * K] = 1.0
+        c_obj[2 * K] = 0.0
+        c_obj[2 * K + 1 :] = self.C * sample_weight / w_scale
+
+        # Inequality constraints: A_ub @ x <= b_ub
+        A_ub = np.zeros((n_samples, n_vars), dtype=np.float64)
+        A_ub[:, :K] = -y_signed[:, np.newaxis] * Z        # beta_plus
+        A_ub[:, K : 2 * K] = y_signed[:, np.newaxis] * Z  # beta_minus
+        A_ub[:, 2 * K] = -y_signed                         # b_free
+        rows = np.arange(n_samples)
+        A_ub[rows, 2 * K + 1 + rows] = -1.0               # xi_i
+        b_ub = np.full(n_samples, -1.0)
+
+        bounds = (
+            [(0.0, None)] * K
+            + [(0.0, None)] * K
+            + [(None, None)]
+            + [(0.0, None)] * n_samples
+        )
+
+        result = linprog(
+            c_obj,
+            A_ub=A_ub,
+            b_ub=b_ub,
+            bounds=bounds,
+            method="highs",
+            options={"disp": False},
+        )
+
+        if not result.success or not hasattr(result, "ineqlin"):
+            return np.zeros(n_samples)
+
+        # shadow price sign: marginals[i] = d(obj*)/d(b_ub[i]) <= 0
+        # alpha_i = -marginals[i] >= 0
+        return np.maximum(-result.ineqlin.marginals, 0.0)
+
+    def _price_new_rules(
+        self,
+        memberships: np.ndarray,
+        y_signed: np.ndarray,
+        alpha: np.ndarray,
+        sample_weight: np.ndarray,
+        active_pair_set: set,
+        blacklisted_pairs: set,
+        *,
+        top_k: int = 5,
+    ) -> list[FuzzyRule]:
+        """Find top-k length-2 rules with large auxiliary pricing scores.
+
+        Uses product t-norm pricing (a single BLAS dgemm call, O(d^2 n)) as a
+        fast candidate finder. Candidates are shortlisted by product pricing,
+        then re-scored with the configured aggregation before adding. This matches the
+        auxiliary pricing expression for product t-norm and is heuristic for
+        minimum/smooth-min aggregation.
+        """
+        W = alpha * y_signed  # (n_samples,)
+        n_samples, n_features, n_terms = memberships.shape
+        M_flat = memberships.reshape(n_samples, n_features * n_terms)
+
+        # --- Fast product-t-norm pricing via single BLAS matmul ---
+        WM = W[:, np.newaxis] * M_flat   # (n, 3d)
+        R = M_flat.T @ WM               # (3d, 3d) — symmetric
+
+        # Zero out same-feature blocks (diagonal 3×3 blocks)
+        for j in range(n_features):
+            s, e = j * n_terms, (j + 1) * n_terms
+            R[s:e, s:e] = 0.0
+
+        R_abs = np.abs(np.triu(R, k=1))  # upper triangle only (j1 < j2)
+
+        threshold = 1.0 + self.tol
+        if R_abs.max() <= threshold:
+            return []
+
+        # Gather top-(top_k × 20) candidate (k1, k2) pairs for re-scoring
+        flat = R_abs.ravel()
+        n_top = min(top_k * 20, flat.size)
+        top_flat_indices = np.argpartition(flat, -n_top)[-n_top:]
+        top_flat_indices = top_flat_indices[np.argsort(flat[top_flat_indices])[::-1]]
+
+        # Re-score with actual t-norm and collect valid rules
+        rescored: list[tuple[float, FuzzyRule]] = []
+        for idx in top_flat_indices:
+            prod_score = flat[int(idx)]
+            if prod_score <= threshold:
+                break
+
+            k1, k2 = divmod(int(idx), n_features * n_terms)
+            j1, t1 = divmod(k1, n_terms)
+            j2, t2 = divmod(k2, n_terms)
+            if j1 >= j2:
+                continue
+
+            pair_key: frozenset = frozenset(
+                [(j1, _TERM_NAMES[t1]), (j2, _TERM_NAMES[t2])]
+            )
+            if pair_key in active_pair_set or pair_key in blacklisted_pairs:
+                continue
+
+            # Compute activation under actual t-norm
+            act = self._combine_memberships(
+                memberships,
+                (j1, j2),
+                (t1, t2),
+            )
+
+            # Re-score: reduced gradient under actual t-norm
+            actual_score = float(abs(W @ act))
+            if actual_score <= threshold:
+                continue
+
+            if float(np.average(act, weights=sample_weight)) < self.min_rule_coverage:
+                blacklisted_pairs.add(pair_key)
+                continue
+
+            rule = FuzzyRule(
+                (
+                    RuleCondition(j1, _TERM_NAMES[t1]),
+                    RuleCondition(j2, _TERM_NAMES[t2]),
+                )
+            )
+            rescored.append((actual_score, rule))
+            if len(rescored) >= top_k * 4:
+                break  # have enough candidates to return top_k
+
+        rescored.sort(key=lambda item: item[0], reverse=True)
+        return [rule for _, rule in rescored[:top_k]]
 
     def _fallback_single_feature_rules(
         self,
@@ -539,7 +823,7 @@ class SparseMaxMarginFuzzyRuleMachine(ClassifierMixin, BaseEstimator):
                 f"X has {X_checked.shape[1]} features, but this estimator was fit "
                 f"with {self.n_features_in_} features."
             )
-        return X_checked
+        return X_checked[:, self.selected_feature_indices_]
 
     def _signed_labels(self, y: np.ndarray) -> np.ndarray:
         y_array = np.asarray(y)

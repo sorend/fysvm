@@ -2,8 +2,8 @@
 
 from importlib.metadata import version
 
-__version__ = version("fysvm")
-
+from fysvm.datasets import DatasetSpec, PreparedDataset, list_datasets, load_dataset
+from fysvm.membership import MembershipLogisticL1, MembershipSVM
 from fysvm.rule_svm import (
     FuzzyRule,
     FuzzyRuleSVM,
@@ -11,10 +11,18 @@ from fysvm.rule_svm import (
     SparseMaxMarginFuzzyRuleMachine,
 )
 
+__version__ = version("fysvm")
+
 __all__ = [
+    "DatasetSpec",
     "FuzzyRule",
     "FuzzyRuleSVM",
+    "MembershipLogisticL1",
+    "MembershipSVM",
+    "PreparedDataset",
     "RuleCondition",
     "SparseMaxMarginFuzzyRuleMachine",
     "__version__",
+    "list_datasets",
+    "load_dataset",
 ]
