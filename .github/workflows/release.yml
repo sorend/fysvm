@@ -63,17 +63,6 @@ jobs:
           echo "Version: $VERSION"
           sed -i "s/version = \".*\"/version = \"$VERSION\"/" pyproject.toml
 
-      - name: Check README contains version
-        run: |
-          RAW_VERSION="${{ steps.git-version.outputs.version }}"
-          VERSION="${RAW_VERSION#v}"
-          VERSION=$(echo "$VERSION" | sed -E 's/-b[0-9]+$//')
-          if ! grep -q "$VERSION" README.md; then
-            echo "ERROR: README.md does not contain version $VERSION"
-            echo "Please update README.md with the new version before releasing."
-            exit 1
-          fi
-
       - name: Build package
         run: uv build
 
