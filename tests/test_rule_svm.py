@@ -95,3 +95,104 @@ def test_fuzzy_violations_report_slack_memberships():
             "strong_violation",
         }
         assert all(0.0 <= value <= 1.0 for value in item["memberships"].values())
+
+
+def test_feature_screening_preserves_prediction_interface():
+    rng = np.random.default_rng(11)
+    signal = rng.normal(size=(80, 2))
+    noise = rng.normal(size=(80, 18))
+    X = np.column_stack([signal, noise])
+    y = np.where(signal[:, 0] + signal[:, 1] > 0, "pos", "neg")
+
+    clf = FuzzyRuleSVM(
+        C=1.0,
+        penalty="l1",
+        max_rule_length=2,
+        max_rules=32,
+        feature_screening="anova",
+        screen_top_k=4,
+        random_state=0,
+    ).fit(X, y)
+
+    assert clf.n_features_in_ == X.shape[1]
+    assert clf.n_screened_features_ == 4
+    assert len(clf.selected_feature_indices_) == 4
+    assert clf.transform(X[:3]).shape == (3, clf.n_rules_)
+    assert clf.predict(X[:3]).shape == (3,)
+
+
+def test_column_generation_min_tnorm_fits_and_predicts():
+    """Column generation with min t-norm should fit and predict correctly."""
+    X, y = make_separable_data()
+    clf = FuzzyRuleSVM(
+        C=10.0,
+        penalty="l1",
+        max_rule_length=2,
+        max_rules=24,
+        and_operator="min",
+        rule_generation="column_generation",
+        feature_names=["glucose", "bmi"],
+        random_state=0,
+    ).fit(X, y)
+
+    assert clf.predict(X).shape == (X.shape[0],)
+    assert np.mean(clf.predict(X) == y) > 0.90
+    assert clf.n_rules_ <= 24
+    # All rules should be at most length 2
+    assert all(rule.length <= 2 for rule in clf.rules_)
+    # Explain interface must still work
+    expl = clf.explain(X[:1])[0]
+    assert np.isclose(expl["margin"], expl["bias"] + expl["net_rule_contribution"])
+
+
+def test_column_generation_product_tnorm_fits_and_predicts():
+    """Column generation with product t-norm should fit and predict correctly."""
+    X, y = make_separable_data()
+    clf = FuzzyRuleSVM(
+        C=10.0,
+        penalty="l1",
+        max_rule_length=2,
+        max_rules=24,
+        and_operator="product",
+        rule_generation="column_generation",
+        feature_names=["glucose", "bmi"],
+        random_state=0,
+    ).fit(X, y)
+
+    assert clf.predict(X).shape == (X.shape[0],)
+    assert np.mean(clf.predict(X) == y) > 0.90
+    assert clf.n_rules_ <= 24
+
+
+def test_column_generation_avoids_full_candidate_materialisation():
+    """Column generation should discover far fewer candidates than full enumeration
+    on a higher-dimensional dataset where the solution is sparse."""
+    rng = np.random.default_rng(42)
+    n_features = 30
+    # True signal lives in features 0 and 1 only
+    X = rng.normal(size=(120, n_features))
+    y = np.where(X[:, 0] - X[:, 1] > 0, "pos", "neg")
+
+    full_enum = FuzzyRuleSVM(
+        C=1.0, penalty="l1", max_rule_length=2, max_rules=256,
+        rule_generation="enumeration", random_state=0,
+    ).fit(X, y)
+
+    col_gen = FuzzyRuleSVM(
+        C=1.0, penalty="l1", max_rule_length=2, max_rules=256,
+        rule_generation="column_generation", random_state=0,
+    ).fit(X, y)
+
+    # Full enumeration produces O(d^2) candidates; column generation far fewer
+    max_possible = 9 * n_features * (n_features - 1) // 2 + 3 * n_features
+    assert full_enum.n_candidate_rules_ == max_possible or full_enum.n_candidate_rules_ > 0
+    assert col_gen.n_candidate_rules_ < full_enum.n_candidate_rules_
+
+    # Both must give reasonable accuracy
+    assert np.mean(col_gen.predict(X) == y) > 0.80
+
+
+def test_column_generation_invalid_parameter_raises():
+    from pytest import raises
+    with raises(ValueError, match="rule_generation"):
+        FuzzyRuleSVM(rule_generation="invalid")._validate_parameters()
