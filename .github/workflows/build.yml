@@ -72,6 +72,9 @@ jobs:
           VERSION="${{ steps.git-version.outputs.version }}"
           VERSION="${VERSION#v}"
           VERSION=$(echo "$VERSION" | sed -E 's/-rc\.([0-9]+)/rc\1/' | sed -E 's/-b[0-9]+$//')
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            VERSION="${VERSION}+pr"
+          fi
           echo "Version: $VERSION"
           sed -i "s/version = \".*\"/version = \"$VERSION\"/" pyproject.toml
 
