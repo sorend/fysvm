@@ -72,6 +72,9 @@ jobs:
           VERSION="${{ steps.git-version.outputs.version }}"
           VERSION="${VERSION#v}"
           VERSION=$(echo "$VERSION" | sed -E 's/-rc\.([0-9]+)/rc\1/' | sed -E 's/-b[0-9]+$//')
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            VERSION="${VERSION}"
+          fi
           echo "Version: $VERSION"
           sed -i "s/version = \".*\"/version = \"$VERSION\"/" pyproject.toml
 
@@ -88,6 +91,9 @@ jobs:
     name: Publish to PyPI Test
     runs-on: ubuntu-latest
     needs: build
+    if: github.event_name != 'pull_request'
+    permissions:
+      id-token: write
     steps:
       - name: Download build artifacts
         uses: actions/download-artifact@v4
@@ -98,5 +104,4 @@ jobs:
       - name: Publish to TestPyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          password: ${{ secrets.PYPI_TEST_TOKEN }}
           repository-url: https://test.pypi.org/legacy/
