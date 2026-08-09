@@ -24,12 +24,14 @@ def write_run_metadata(
     path = Path(output_dir)
     path.mkdir(parents=True, exist_ok=True)
     metadata = {
+        "schema_version": 2,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "command": list(command) if command is not None else sys.argv,
         "config": config or {},
         "python": sys.version,
         "platform": platform.platform(),
         "git_commit": _git_commit(),
+        "git_tree": _git_tree(),
         "uv_lock_sha256": _file_sha256(Path("uv.lock")),
     }
     (path / "run_metadata.json").write_text(
@@ -43,6 +45,17 @@ def _git_commit() -> str | None:
     try:
         return subprocess.check_output(
             ["git", "rev-parse", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+def _git_tree() -> str | None:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD^{tree}"],
             text=True,
             stderr=subprocess.DEVNULL,
         ).strip()
