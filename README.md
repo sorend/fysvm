@@ -324,11 +324,14 @@ See the [`examples/`](examples/) directory:
 If you use `FuzzyRuleSVM` in published work, please cite:
 
 ```bibtex
-@misc{davidsen2026fuzzy,
-  author = {Davidsen, S. A. and Padmavathamma, M.},
-  title  = {Faithful Regularised Classification over Linguistic Fuzzy Rule Activations},
-  year   = {2026},
-  note   = {Under review}
+@article{davidsen2026fuzzy,
+  author  = {Davidsen, S. Atmakuri and Padmavathamma, M.},
+  title   = {Faithful regularised classification over linguistic fuzzy rule activations},
+  journal = {Iranian Journal of Fuzzy Systems},
+  year    = {2026},
+  doi     = {10.22111/ijfs.2026.56189.10009},
+  url     = {https://doi.org/10.22111/ijfs.2026.56189.10009},
+  note    = {Accepted manuscript, available online 31 October 2026}
 }
 ```
 
