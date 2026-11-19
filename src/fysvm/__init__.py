@@ -11,6 +11,7 @@ from fysvm.csrq_artifacts import (
     OptimizationReport,
 )
 from fysvm.datasets import DatasetSpec, PreparedDataset, list_datasets, load_dataset
+from fysvm.directional import DirectionalCertificate, DirectionalCondition, DirectionalExplainer
 from fysvm.membership import MembershipLogisticL1, MembershipSVM
 from fysvm.quotient import (
     CanonicalBasis,
@@ -40,6 +41,9 @@ __all__ = [
     "CSRQClassifier",
     "DatasetSpec",
     "DetailedSemanticEqualityCertificate",
+    "DirectionalCertificate",
+    "DirectionalCondition",
+    "DirectionalExplainer",
     "FloatingPointAudit",
     "FuzzyRule",
     "FuzzyRuleSVM",
