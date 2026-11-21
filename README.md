@@ -107,6 +107,66 @@ assert abs(explanation["margin"]
            - (explanation["bias"] + explanation["net_rule_contribution"])) < 1e-12
 ```
 
+### Directional certificates
+
+A directional certificate gives the fewest available linguistic conditions
+under which increasing a feature is guaranteed to raise or lower the fitted
+margin. Using the quickstart data and split, we ask when increasing worst
+radius from its low anchor to its medium anchor raises the margin.
+
+```python
+from fysvm import DirectionalExplainer, FuzzyRuleSVM
+
+clf = FuzzyRuleSVM(
+    and_operator="product",
+    max_rule_length=2,
+    max_rules=128,
+    feature_names=data.feature_names,
+    random_state=0,
+).fit(X_train, y_train)
+
+explainer = DirectionalExplainer(clf)
+feature = list(data.feature_names).index("worst radius")
+result = explainer.explain(X_test[0], feature=feature, transition=0)
+start, end = result.segment
+print(f"{result.feature_name}: {float(start):g} -> {float(end):g}")
+print(f"Status: {result.status}, direction: {result.direction:+d}")
+if result.bound is not None:
+    print(f"Minimum signed margin change (rounded): {float(result.bound):.4f}")
+for condition in result.conditions:
+    print(f"Condition: {condition.name} is {condition.term}")
+```
+
+Example output:
+
+```text
+worst radius: 10.8265 -> 14.915
+Status: certified, direction: +1
+Minimum signed margin change (rounded): 0.2685
+Condition: worst perimeter is medium
+```
+
+In this fit, “medium” worst perimeter spans approximately 83.38 to 137.26.
+Throughout that interval, increasing worst radius between the two anchors
+raises the margin for the benign class, whatever values the other features
+take. The smallest increase for the full move is about 0.2685 margin units.
+Dropping the perimeter condition loses the guarantee.
+
+Use the original feature index and input units. Transition `0` moves from low
+to medium and `1` from medium to high. Use `explainer.explain_case(X_test[0])`
+to query both transitions of every fitted feature. The explainer requires unary
+or pairwise product rules and three strictly ordered anchors per fitted feature.
+
+Each condition uses the case's strongest fitted term and the closed interval
+where its membership is at least 0.5. A `None` endpoint denotes an unbounded side.
+`certified` gives a direction (`+1` or `-1`) for the margin of `clf.classes_[1]`
+and an exact positive bound on the magnitude of the full anchor-to-anchor
+change. An empty certified context holds for every background. `zero` means
+the case effect is within tolerance (default `1e-9`), and `unresolved` means the
+available conditions cannot certify the case's direction. The guarantee applies
+to the fitted piecewise-linear score over the Cartesian product of the
+conditioning intervals and unrestricted features.
+
 ### Global rule inspection
 
 ```python
@@ -332,6 +392,17 @@ If you use `FuzzyRuleSVM` in published work, please cite:
   doi     = {10.22111/ijfs.2026.56189.10009},
   url     = {https://doi.org/10.22111/ijfs.2026.56189.10009},
   note    = {Accepted manuscript, available online 31 October 2026}
+}
+```
+
+If you use directional certificates, please also cite:
+
+```bibtex
+@unpublished{davidsen2026directional,
+  author = {Davidsen, S. A. and Kumari, S. Surya},
+  title  = {Shortest Linguistic Conditions for Guaranteed Directions in Fuzzy Rule Classifiers},
+  year   = {2026},
+  note   = {Submitted}
 }
 ```
 
